@@ -13,6 +13,7 @@ from tornado.test.util import unittest
 
 TEST_MODULES = [
     'torncache.test.test_hello',
+    'torncache.test.test_client',
 ]
 
 

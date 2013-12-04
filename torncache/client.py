@@ -12,6 +12,12 @@ import types
 import functools
 import collections
 
+# For MC url parsing
+try:
+    import urlparse  # py2
+except ImportError:
+    import urllib.parse as urlparse  # py3
+
 from tornado import iostream
 from tornado import stack_context
 from tornado.ioloop import IOLoop
@@ -107,7 +113,20 @@ class ClientPool(object):
         self._kwargs = kwargs
 
     def _create_clients(self, n):
-        return [Client(self._servers, **self._kwargs) for x in xrange(n)]
+        servers = self._servers
+        if isinstance(servers, basestring):
+            servers = []
+            for server in self._servers.split(','):
+                # parse url form 'mc://host:port?<weight>='
+                if self._servers.startswith('mc'):
+                    url = urlparse.urlsplit(server)
+                    server = url.netloc
+                    if url.query:
+                        weight = urlparse.parse_qs(url.query).get('weight', 1)
+                        server = [server, weight]
+                servers.append(server)
+        # create clients
+        return [Client(servers, **self._kwargs) for x in xrange(n)]
 
     def _invoke(self, cmd, *args, **kwargs):
         def on_finish(response, c, _cb, **kwargs):
@@ -189,7 +208,7 @@ class Client(object):
         # get pair server, key
         return (self._buckets[serverhash % len(self._buckets)], key)
 
-    def set(self, key, value, expire=0, callback=None):
+    def set(self, key, value, expire=0, noreply=True, callback=None):
         """
         The memcached "set" command.
 
@@ -211,7 +230,7 @@ class Client(object):
             callback and callback(False)
             return
         # invoke
-        server.store_cmd('set', key, expire, value, None, callback)
+        server.store_cmd('set', key, expire, noreply, value, None, callback)
 
     def set_many(self, values, expire=0, noreply=True):
         """
@@ -426,7 +445,7 @@ class Client(object):
      #     self._expectvalue(server, line=None, callback=functools.partial(self._gets_expectval_cb, server=server, status=status, callback=callback))
 
     def _expect(self, data, expected, callback):
-        if data.endswith('\r\n'):
+        if isinstance(data, basestring) and data.endswith('\r\n'):
             data = data[:-2]
         if data != expected:
             msg = "'%s' expected but '%s' received" % (expected, data)
@@ -476,7 +495,7 @@ class Client(object):
     #          server.fetch_cmd(cmd)
     #          server.send(cmd), functools.partial(self._gets_send_cb, server=server, status=gets_stat, callback=self._set_timeout(server, callback)))
 
-    def delete(self, key, time=0, callback=None):
+    def delete(self, key, time=0, noreply=True, callback=None):
         """
         The memcached "delete" command.
 
@@ -490,18 +509,17 @@ class Client(object):
         # Fetch memcached connection
         server, key = self._get_server(key)
         if not server:
-            callback and callback(False)
+            callback and callback(None)
             return
         # compute command
-        cmd = 'delete {0}{1}'.format(key, ' {1}'.format(time) if time else '')
-        # oneway call
-        if not callback:
-            server.misc_cmd(cmd, 'delete')
-        else:
-            # wait fo response
-            cmd += ' noreply'
-            cb = lambda x: self._expect(x, 'DELETED', callback)
-            server.misc_cmd(cmd, 'delete', callback=cb)
+        timearg = ' {0}'.format(time) if time else ''
+        replarg = ' noreply' if noreply else ''
+        cmd = 'delete {0}{1}{2}\r\n'.format(key, timearg, replarg)
+
+        # invoke
+        cb = lambda x: self._expect(x, 'DELETED', callback)
+        cb = callback if noreply else cb
+        server.misc_cmd(cmd, 'delete', noreply, callback=cb)
 
     def delete_many(self, keys, noreply=True):
         """
@@ -834,6 +852,7 @@ class Connection:
                         _, key, flags, size = line.split()
                     # read also \r\n
                     value = yield Task(self._stream.read_bytes, int(size) + 2)
+                    value = value[:-2]
                     if self._deserializer:
                         value = self._deserializer(key, value, int(flags))
                     if expect_cas:
@@ -857,7 +876,8 @@ class Connection:
         callback(result)
 
     @engine
-    def store_cmd(self, name, key, expire, data, cas=None, callback=None):
+    def store_cmd(self, name, key, expire, noreply, data,
+                  cas=None, callback=None):
         try:
             key = str(key)
             if ' ' in key:
@@ -882,11 +902,11 @@ class Connection:
         except UnicodeEncodeError as e:
             raise MemcacheIllegalInputError(str(e))
 
-        if cas is not None and callback:
+        if cas is not None and noreply:
             extra = ' {0} noreply'.format(cas)
-        elif cas is not None and not callback:
+        if cas is not None and not noreply:
             extra = ' {0}'.format(cas)
-        elif cas is None and callback:
+        elif cas is None and noreply:
             extra = ' noreply'
         else:
             extra = ''
@@ -896,13 +916,15 @@ class Connection:
 
         try:
             yield Task(self._stream.write, cmd)
-            if callback:
+            if noreply:
+                self._clear_timeout()
                 callback(True)
                 return
 
             line = yield Task(self._stream.read_until, "\r\n")
             line = line[:-2]
             self._raise_errors(line, name)
+            self._clear_timeout()
 
             if line in VALID_STORE_RESULTS[name]:
                 if line == 'STORED':
@@ -920,7 +942,7 @@ class Connection:
             raise
 
     @engine
-    def misc_cmd(self, cmd, cmd_name, callback=None):
+    def misc_cmd(self, cmd, cmd_name, noreply, callback=None):
         # Open connection if required
         if self.closed:
             yield Task(self.connect)
@@ -928,17 +950,22 @@ class Connection:
         # Add timeout for this request
         self._add_timeout("Timeout on misc '{0}'".format(cmd_name))
 
-        # send command
         try:
-            yield Task(self._stream.write, cmd + "\r\n")
-            if callback:
-                line = yield Task(self._stream.read_until, "\r\n")
-                self._raise_errors(line, cmd_name)
-            # remove any pending timeout
+            # send command
+            yield Task(self._stream.write, cmd)
+
+            if noreply:
+                self._clear_timeout()
+                callback(True)
+                return
+
+            # wait for response
+            line = yield Task(self._stream.read_until, "\r\n")
+            self._raise_errors(line, cmd_name)
             self._clear_timeout()
         except Exception, err:
             self.mark_dead(err.message)
-            return
+            raise
         # invoke
         callback and callback(line)
 
