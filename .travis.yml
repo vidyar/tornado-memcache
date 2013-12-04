@@ -3,18 +3,15 @@ python: 2.7
 services:
   - memcached
 env:
-  - MEMCACHED_URL=mc://localhost:11211?protocol=text&weight=1
-  - TOX_ENV=py26
-  - TOX_ENV=py26-full
-  - TOX_ENV=py27-full
-  - TOX_ENV=py27-opt
-  - TOX_ENV=py32
-  - TOX_ENV=py32-utf8
-  - TOX_ENV=py32-full
-  - TOX_ENV=py32-opt
-  - TOX_ENV=py33
-  - TOX_ENV=pypy
-  - TOX_ENV=flake8
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py26
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py27
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py27-opt
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py32
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py32-utf8
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py32-opt
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py33
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=pypy
+  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=flake8
 install:
   - pip install tox
 script:

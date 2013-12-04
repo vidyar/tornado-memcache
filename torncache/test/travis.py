@@ -5,9 +5,8 @@ print "python: 2.7"
 print "services:"
 print "  - memcached"
 print "env:"
-print "  - MEMCACHED_URL=%s" % 'mc://localhost:11211?protocol=text&weight=1'
 for env in parseconfig(None, 'tox').envlist:
-    print "  - TOX_ENV=%s" % env
+    print "  - MEMCACHED_URL=%s TOX_ENV=%s" % ('mc://localhost:11211', env)
 print "install:"
 print "  - pip install tox"
 print "script:"

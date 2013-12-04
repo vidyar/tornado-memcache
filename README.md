@@ -1,4 +1,10 @@
-A comprehensive, fast, pure-Python memcached client library.
+torncache
+=========
+
+[![Build Status](https://travis-ci.org/inean/tornado-memcache.png?branch=master)](https://travis-ci.org/inean/tornado-memcache)
+
+A comprehensive, fast, async pure-Python memcached client library for
+tornado.
 
 Basic Usage:
 ------------
