@@ -8,7 +8,7 @@
 import tornado.ioloop
 import tornado.web
 import tornado.gen as gen
-import memcached
+import torncache.client as memcached
 import time
 
 ccs = memcached.ClientPool(['127.0.0.1:11211'], size=100)
