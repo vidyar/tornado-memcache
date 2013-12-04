@@ -8,7 +8,6 @@ import weakref
 import socket
 import time
 import logging
-import types
 import functools
 import collections
 
@@ -133,7 +132,7 @@ class ClientPool(object):
         def on_finish(response, c, _cb, **kwargs):
             self._used.remove(c)
             self._clients.append(c)
-            _cb(response, **kwargs)
+            _cb and _cb(response, **kwargs)
         if not self._clients:
             # Add a new client
             total_clients = len(self._clients) + len(self._used)
@@ -145,8 +144,8 @@ class ClientPool(object):
         client = self._clients.popleft()
         self._used.append(client)
         # override used callback to
-        ctx = functools.partial(on_finish, c=client, _cb=kwargs['callback'])
-        kwargs['callback'] = ctx
+        cb = kwargs.get('callback')
+        kwargs['callback'] = functools.partial(on_finish, c=client, _cb=cb)
         getattr(client, cmd)(*args, **kwargs)
 
     def __getattr__(self, name):
@@ -813,13 +812,6 @@ class Connection:
 
     @engine
     def fetch_cmd(self, name, keys, expect_cas, callback):
-        # Open connection if required
-        if self.closed:
-            yield Task(self.connect)
-
-        # Add timeout for this request
-        self._add_timeout("Timeout on fetch '{0}'".format(name))
-
         # build command
         try:
             key_strs = []
@@ -831,6 +823,13 @@ class Connection:
                 key_strs.append(key)
         except UnicodeEncodeError as e:
             raise MemcacheIllegalInputError(str(e))
+
+        # Open connection if required
+        if self.closed:
+            yield Task(self.connect)
+
+        # Add timeout for this request
+        self._add_timeout("Timeout on fetch '{0}'".format(name))
 
         try:
             # send command
@@ -880,9 +879,15 @@ class Connection:
     def store_cmd(self, name, key, expire, noreply, data,
                   cas=None, callback=None):
         try:
+            # process key
             key = str(key)
             if ' ' in key:
                 raise MemcacheIllegalInputError("Key contains spaces: %s", key)
+            # process data
+            flags = 0
+            if self._serializer:
+                data, flags = self.serializer(key, data)
+            data = str(data)
         except UnicodeEncodeError as e:
             raise MemcacheIllegalInputError(str(e))
 
@@ -892,16 +897,6 @@ class Connection:
 
         # Add timeout for this request
         self._add_timeout("Timeout on fetch '{0}'".format(name))
-
-        if self._serializer:
-            data, flags = self.serializer(key, data)
-        else:
-            flags = 0
-
-        try:
-            data = str(data)
-        except UnicodeEncodeError as e:
-            raise MemcacheIllegalInputError(str(e))
 
         if cas is not None and noreply:
             extra = ' {0} noreply'.format(cas)
