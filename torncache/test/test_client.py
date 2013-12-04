@@ -24,7 +24,7 @@ class ClientTest(testing.AsyncTestCase):
         v = 'this is a test'
 
         def callback(value):
-            self.assertTrue(isinstance(value, (int, long)))
+            self.assertTrue(isinstance(value, int))
             self.assertNotEqual(value, 0)
             self.stop()
 
@@ -55,7 +55,7 @@ class ClientTest(testing.AsyncTestCase):
 
         def delete_cb(value):
             #print 'delete_cb value: %s' % repr(value)
-            self.assertTrue(isinstance(value, (int, long)))
+            self.assertTrue(isinstance(value, int))
             self.assertNotEqual(value, 0)
             self.stop()
 

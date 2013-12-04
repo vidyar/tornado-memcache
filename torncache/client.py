@@ -16,6 +16,7 @@ import collections
 try:
     import urlparse  # py2
 except ImportError:
+    basestring = str
     import urllib.parse as urlparse  # py3
 
 from tornado import iostream
@@ -201,7 +202,7 @@ class Client(object):
     def _get_server(self, key):
         """Fetch valid MC for this key"""
         serverhash = 0
-        if isinstance(key, types.TupleType):
+        if isinstance(key, tuple):
             serverhash, key = key[:2]
         elif len(self._buckets) > 1:
             serverhash = hash(key)
@@ -681,7 +682,7 @@ class Connection:
 
         # Parse host conf and weight
         self.weight = 1
-        if isinstance(host, types.TupleType):
+        if isinstance(host, tuple):
             host, self.weight = host
 
         # Parse host port
@@ -864,7 +865,7 @@ class Connection:
                     result[key] = value
                 else:
                     raise MemcacheUnknownError(line[:32])
-        except Exception, err:
+        except Exception as err:
             self.mark_dead(err.message)
             if self._ignore_exc:
                 self._clear_timeout()
@@ -937,7 +938,7 @@ class Connection:
                     callback(False)
             else:
                 raise MemcacheUnknownError(line[:32])
-        except Exception, err:
+        except Exception as err:
             self.mark_dead(err.message)
             raise
 
@@ -963,7 +964,7 @@ class Connection:
             line = yield Task(self._stream.read_until, "\r\n")
             self._raise_errors(line, cmd_name)
             self._clear_timeout()
-        except Exception, err:
+        except Exception as err:
             self.mark_dead(err.message)
             raise
         # invoke
