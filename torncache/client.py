@@ -294,7 +294,7 @@ class Client(object):
         # invoke
         server.store_cmd('add', key, expire, noreply, value, None, callback)
 
-    def replace(self, key, value, expire=0, noreply=True):
+    def replace(self, key, value, expire=0, noreply=True, callback=None):
         """
         The memcached "replace" command.
 
@@ -310,7 +310,13 @@ class Client(object):
           the value was stored and False if it wasn't (because the key didn't
           already exist).
         """
-        return self._store_cmd('replace', key, expire, noreply, value)
+        # Fetch memcached connection
+        server, key = self._get_server(key)
+        if not server:
+            callback and callback(None)
+            return
+        # invoke
+        server.store_cmd('replace', key, expire, noreply, value, None, callback)
 
     def append(self, key, value, expire=0, noreply=True):
         """

@@ -18,7 +18,8 @@ class ClientTest(testing.AsyncTestCase):
         super(ClientTest, self).setUp()
         servers = os.environ.get('MEMCACHED_URL', 'mc://127.0.0.1:11211')
         self.pool = memcache.ClientPool(servers=servers, ioloop=self.io_loop)
-        self.pool.delete('key', noreply=True)
+        self.pool.delete('key', noreply=True, callback=self.stop)
+        self.wait()
 
     def test_set_success(self):
         self.pool.set('key', 'value', noreply=False, callback=self.stop)
@@ -348,17 +349,20 @@ class ClientTest(testing.AsyncTestCase):
 #         tools.assert_equal(client.sock, None)
 #         tools.assert_equal(client.buf, '')
 
-#     def test_replace_stored(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['STORED\r\n'])
-#         result = client.replace('key', 'value', noreply=False)
-#         tools.assert_equal(result, True)
+    def test_replace_stored(self):
+        # store value
+        self.pool.set('key', 'value', noreply=True, callback=self.stop)
+        self.wait()
+        # now try to replace it
+        self.pool.replace('key', 'value', noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
-#     def test_replace_not_stored(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['NOT_STORED\r\n'])
-#         result = client.replace('key', 'value', noreply=False)
-#         tools.assert_equal(result, False)
+    def test_replace_not_stored(self):
+        self.pool.replace('key', 'value', noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertFalse(result)
+
 
 #     def test_serialization(self):
 #         def _ser(key, value):
