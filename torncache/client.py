@@ -8,6 +8,7 @@ import weakref
 import socket
 import time
 import logging
+import itertools
 import functools
 import collections
 
@@ -227,14 +228,13 @@ class Client(object):
         # Fetch memcached connection
         server, key = self._get_server(key)
         if not server:
-            callback and callback(False)
+            callback and callback(None)
             return
         # invoke
         server.store_cmd('set', key, expire, noreply, value, None, callback)
 
-    def set_many(self, values, expire=0, noreply=True):
-        """
-        A convenience function for setting multiple values.
+    def set_many(self, values, expire=0, noreply=True, callback=None):
+        """A convenience function for setting multiple values.
 
         Args:
           values: dict(str, str), a dict of keys and values, see class docs
@@ -244,17 +244,31 @@ class Client(object):
           noreply: optional bool, True to not wait for the reply (the default).
 
         Returns:
-          If no exception is raised, always returns True. Otherwise all, some
-          or none of the keys have been successfully set. If noreply is True
-          then a successful return does not guarantee that any keys were
-          successfully set (just that the keys were successfully sent).
+          Returns a dictionary of keys and operations result
+          values. For each entry, if no exception is raised, always
+          returns True. If an exception is raised, the set may or may
+          not have occurred. If noreply is True, then a successful
+          return does not guarantee a successful set. If no server is
+          present, None is returned.
         """
+        # response handler
+        def on_response(key, result):
+            retval[key] = result
+            if len(retval) == len(values):
+                callback and callback(retval)
 
-        # TODO: make this more performant by sending all the values first, then
-        # waiting for all the responses.
+        # init vars
+        retval, servers = dict(), dict()
         for key, value in values.iteritems():
-            self.set(key, value, expire, noreply)
-        return True
+            server, key = self._get_server(key)
+            servers[key] = server
+        # set it
+        for key, server in servers.iteritems():
+            if server is None:
+                on_response(key, False)
+                continue
+            cb = stack_context.wrap(functools.partial(on_response, key))
+            self.set(key, value, expire, noreply, callback=cb)
 
     def add(self, key, value, expire=0, noreply=True):
         """
@@ -447,9 +461,6 @@ class Client(object):
     def _expect(self, data, expected, callback):
         if isinstance(data, basestring) and data.endswith('\r\n'):
             data = data[:-2]
-        if data != expected:
-            msg = "'%s' expected but '%s' received" % (expected, data)
-            logging.warning(msg)
         callback(data == expected)
 
     # def gets_many(self, keys, callback):
@@ -914,7 +925,7 @@ class Connection:
             yield Task(self._stream.write, cmd)
             if noreply:
                 self._clear_timeout()
-                callback(True)
+                callback and callback(True)
                 return
 
             line = yield Task(self._stream.read_until, "\r\n")
@@ -952,7 +963,7 @@ class Connection:
 
             if noreply:
                 self._clear_timeout()
-                callback(True)
+                callback and callback(True)
                 return
 
             # wait for response

@@ -18,6 +18,7 @@ class ClientTest(testing.AsyncTestCase):
         super(ClientTest, self).setUp()
         servers = os.environ.get('MEMCACHED_URL', 'mc://127.0.0.1:11211')
         self.pool = memcache.ClientPool(servers=servers, ioloop=self.io_loop)
+        self.pool.delete('key', noreply=True)
 
     def test_set_success(self):
         self.pool.set('key', 'value', noreply=False, callback=self.stop)
@@ -37,10 +38,10 @@ class ClientTest(testing.AsyncTestCase):
         result = self.wait()
         self.assertTrue(result)
 
-    # def test_set_many_success(self):
-    #     self.pool.set_many({'key': 'value'}, noreply=False)
-    #     result = self.wait()
-    #     self.assertTrue.assert_equal(result, True)
+    def test_set_many_success(self):
+        self.pool.set_many({'key': 'value'}, noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result['key'])
 
 #     def test_add_stored(self):
 #         client = self.Client(None)
