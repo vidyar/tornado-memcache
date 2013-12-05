@@ -74,29 +74,26 @@ class ClientTest(testing.AsyncTestCase):
         result = self.wait()
         self.assertEqual(result, {})
 
-#     def test_get_many_some_found(self):
-#         client = self.Client(None)
+    def test_get_many_some_found(self):
+        self.pool.set('key1', 'value1', noreply=False, callback=self.stop)
+        self.wait()
+        self.pool.get_many(['key1', 'key2'], callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, {'key1': 'value1'})
+        self.pool.delete('key1', noreply=False, callback=self.stop)
+        self.wait()
 
-#         client.sock = MockSocket(['STORED\r\n'])
-#         result = client.set('key1', 'value1', noreply=False)
+    def test_get_many_all_found(self):
+        self.pool.set('key1', 'value1', noreply=False, callback=self.stop)
+        self.wait()
+        self.pool.set('key2', 'value2', noreply=False, callback=self.stop)
+        self.wait()
+        self.pool.get_many(['key1', 'key2'], callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, {'key1': 'value1', 'key2': 'value2'})
+        self.pool.delete_many(['key1', 'key2'], noreply=False, callback=self.stop)
+        self.wait()
 
-#         client.sock = MockSocket(['VALUE key1 0 6\r\nvalue1\r\nEND\r\n'])
-#         result = client.get_many(['key1', 'key2'])
-#         tools.assert_equal(result, {'key1': 'value1'})
-
-#     def test_get_many_all_found(self):
-#         client = self.Client(None)
-
-#         client.sock = MockSocket(['STORED\r\n'])
-#         result = client.set('key1', 'value1', noreply=False)
-
-#         client.sock = MockSocket(['STORED\r\n'])
-#         result = client.set('key2', 'value2', noreply=False)
-
-#         client.sock = MockSocket(['VALUE key1 0 6\r\nvalue1\r\n'
-#                                 'VALUE key2 0 6\r\nvalue2\r\nEND\r\n'])
-#         result = client.get_many(['key1', 'key2'])
-#         tools.assert_equal(result, {'key1': 'value1', 'key2': 'value2'})
 
     def test_get_unicode_key(self):
         with self.assertRaises(memcache.MemcacheIllegalInputError):
@@ -107,14 +104,12 @@ class ClientTest(testing.AsyncTestCase):
         result = self.wait()
         self.assertEqual(result, False)
 
-#     def test_delete_found(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['STORED\r', '\n'])
-#         result = client.add('key', 'value', noreply=False)
-
-#         client.sock = MockSocket(['DELETED\r\n'])
-#         result = client.delete('key', noreply=False)
-#         tools.assert_equal(result, True)
+    def test_delete_found(self):
+        self.pool.add('key', 'value', noreply=False, callback=self.stop)
+        self.wait()
+        self.pool.delete('key', noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
     def test_delete_noreply(self):
         self.pool.delete('key', noreply=True, callback=self.stop)
@@ -536,60 +531,3 @@ class ClientTest(testing.AsyncTestCase):
 #         client._connect()
 #         tools.assert_equal(client.sock.socket_options, [(socket.IPPROTO_TCP,
 #                                                         socket.TCP_NODELAY, 1)])
-    def test_set(self):
-        k = 'runtests.test_set'
-        v = 'this is a test'
-
-        def callback(value):
-            self.assertTrue(isinstance(value, int))
-            self.assertNotEqual(value, 0)
-            self.stop()
-
-        self.pool.set(k, v, callback=callback)
-        self.wait()
-
-    def test_setget(self):
-        k = 'runtests.test_setget'
-        v = 'something something'
-
-        def callback(value):
-            self.assertEqual(v, value)
-            self.stop()
-
-        self.pool.set(k, v, callback=lambda x: self.stop())
-        self.wait()
-        self.pool.get(k, callback=callback)
-        self.wait()
-
-    def test_delete(self):
-        k = 'runtests.test_delete'
-        v = 'deleteme'
-
-        def set_cb(value):
-            #print 'set_cb value: %s' % repr(value)
-            self.assertNotEqual(value, 0)
-            self.stop()
-
-        def delete_cb(value):
-            #print 'delete_cb value: %s' % repr(value)
-            self.assertTrue(isinstance(value, int))
-            self.assertNotEqual(value, 0)
-            self.stop()
-
-        def get_pre_cb(value):
-            #print 'get_pre_cb: %s' % repr(value)
-            self.assertEqual(value, v)
-            self.stop()
-
-        def get_post_cb(value):
-            #print 'get_post_cb value: %s' % repr(value)
-            self.stop()
-
-        self.pool.set(k, v, callback=set_cb)
-        self.wait()
-        self.pool.get(k, callback=get_pre_cb)
-        self.wait()
-        self.pool.delete(k, callback=delete_cb)
-        self.wait()
-        self.pool.get(k, callback=get_post_cb)
-        self.wait()

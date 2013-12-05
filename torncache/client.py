@@ -262,6 +262,10 @@ class Client(object):
             if len(retval) == len(values):
                 callback and callback(retval)
 
+        # shortcut
+        if not values:
+            callback and callback({})
+
         # init vars
         retval, servers = dict(), dict()
         for key, value in values.iteritems():
@@ -444,7 +448,7 @@ class Client(object):
                 on_response(server, result)
                 continue
             cb = stack_context.wrap(functools.partial(on_response, server))
-            server.fetch_cmd('get', keys, True, callback=cb)
+            server.fetch_cmd('get', keys, False, callback=cb)
 
     def gets(self, key, callback):
         """
@@ -507,7 +511,7 @@ class Client(object):
         cb = callback if noreply else cb
         server.misc_cmd(cmd, 'delete', noreply, callback=cb)
 
-    def delete_many(self, keys, noreply=True):
+    def delete_many(self, keys, noreply=True, callback=None):
         """
         A convenience function to delete multiple keys.
 
@@ -520,15 +524,27 @@ class Client(object):
           memcache for deletion and if noreply is False, they have been
           acknowledged by memcache.
         """
+        # response handler
+        def on_response(key, result):
+            retval[key] = result
+            if len(retval) == len(keys):
+                callback and callback(retval)
+
         if not keys:
-            return True
+            callback and callback({})
 
-        # TODO: make this more performant by sending all keys first, then
-        # waiting for all values.
+        # init vars
+        retval, servers = dict(), dict()
         for key in keys:
-            self.delete(key, noreply)
-
-        return True
+            server, key = self._get_server(key)
+            servers[key] = server
+        # set it
+        for key, server in servers.iteritems():
+            if server is None:
+                on_response(key, False)
+                continue
+            cb = stack_context.wrap(functools.partial(on_response, key))
+            self.delete(key, noreply, callback=cb)
 
     def incr(self, key, value, noreply=False):
         """
