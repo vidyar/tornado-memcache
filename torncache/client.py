@@ -8,7 +8,6 @@ import weakref
 import socket
 import time
 import logging
-import itertools
 import functools
 import collections
 
@@ -209,6 +208,11 @@ class Client(object):
         # get pair server, key
         return (self._buckets[serverhash % len(self._buckets)], key)
 
+    def _expect(self, data, expected, callback):
+        if isinstance(data, basestring) and data.endswith('\r\n'):
+            data = data[:-2]
+        callback(data == expected)
+
     def set(self, key, value, expire=0, noreply=True, callback=None):
         """
         The memcached "set" command.
@@ -318,7 +322,7 @@ class Client(object):
         # invoke
         server.store_cmd('replace', key, expire, noreply, value, None, callback)
 
-    def append(self, key, value, expire=0, noreply=True):
+    def append(self, key, value, expire=0, noreply=True, callback=None):
         """
         The memcached "append" command.
 
@@ -332,9 +336,15 @@ class Client(object):
         Returns:
           True.
         """
-        return self._store_cmd('append', key, expire, noreply, value)
+        # Fetch memcached connection
+        server, key = self._get_server(key)
+        if not server:
+            callback and callback(None)
+            return
+        # invoke
+        server.store_cmd('append', key, expire, noreply, value, None, callback)
 
-    def prepend(self, key, value, expire=0, noreply=True):
+    def prepend(self, key, value, expire=0, noreply=True, callback=None):
         """
         The memcached "prepend" command.
 
@@ -348,9 +358,14 @@ class Client(object):
         Returns:
           True.
         """
-        return self._store_cmd('prepend', key, expire, noreply, value)
+        server, key = self._get_server(key)
+        if not server:
+            callback and callback(None)
+            return
+        # invoke
+        server.store_cmd('prepend', key, expire, noreply, value, None, callback)
 
-    def cas(self, key, value, cas, expire=0, noreply=False):
+    def cas(self, key, value, cas, expire=0, noreply=False, callback=None):
         """
         The memcached "cas" command.
 
@@ -367,7 +382,12 @@ class Client(object):
           the key didn't exist, False if it existed but had a different cas
           value and True if it existed and was changed.
         """
-        return self._store_cmd('cas', key, expire, noreply, value, cas)
+        server, key = self._get_server(key)
+        if not server:
+            callback and callback(None)
+            return
+        # invoke
+        server.store_cmd('cas', key, expire, noreply, value, cas, callback)
 
     def get(self, key, callback):
         """
@@ -387,24 +407,7 @@ class Client(object):
         cb = lambda x: callback(x.get(key, None))
         server.fetch_cmd('get', [key], False, callback=cb)
 
-    def get_many(self, keys):
-        """
-        The memcached "get" command.
-
-        Args:
-          keys: list(str), see class docs for details.
-
-        Returns:
-          A dict in which the keys are elements of the "keys" argument list
-          and the values are values from the cache. The dict may contain all,
-          some or none of the given keys.
-        """
-        if not keys:
-            return {}
-
-        return self._fetch_cmd('get', keys, False)
-
-    def gets(self, key):
+    def gets(self, key, callback):
         """
         The memcached "gets" command for one key, as a convenience.
 
@@ -414,7 +417,13 @@ class Client(object):
         Returns:
           A tuple of (key, cas), or (None, None) if the key was not found.
         """
-        return self._fetch_cmd('gets', [key], True).get(key, (None, None))
+        server, key = self._get_server(key)
+        if not server:
+            callback((None, None))
+            return
+
+        cb = lambda x: callback(x.get(key, (None, None)))
+        server.fetch_cmd('gets', [key], True, callback=cb)
 
     def gets_many(self, keys):
         """
@@ -432,91 +441,6 @@ class Client(object):
             return {}
 
         return self._fetch_cmd('gets', keys, True)
-
-     # def gets(self, keys, callback):
-     #     '''Retrieves several keys from the memcache.
-
-     #     @return: The value list
-     #     '''
-     #     servers = dict()
-     #     for key in keys:
-     #         server, key = self._get_server(key)
-     #         if not server:
-     #             raise _Error('No available server for %s' % key)
-     #         if server in servers:
-     #             servers[server].append(key)
-     #         else:
-     #             servers[server] = [key]
-
-     #     self._statlog('gets')
-
-     #     gets_stat = {'server':servers.keys(), 'finished':0, 'result':{} }
-
-     #     for server in servers:
-     #         server.send("get %s" % ' '.join(servers[server]), functools.partial(self._gets_send_cb, server=server, status=gets_stat, callback=self._set_timeout(server, callback)))
-
-     # def _gets_send_cb(self, server, status, callback):
-     #     self._expectvalue(server, line=None, callback=functools.partial(self._gets_expectval_cb, server=server, status=status, callback=callback))
-
-     # def _gets_expectval_cb(self, rkey, flags, rlen, server, status, callback):
-     #     if not rkey:
-     #         status['finished'] += 1
-     #         if status['finished'] == len(status['server']):
-     #             self.finish(functools.partial(callback,status['result']))
-     #         return
-     #     self._recv_value(server, flags, rlen, functools.partial(self._gets_recv_cb, key=rkey, server=server, status=status, callback=callback))
-
-     # def _gets_recv_cb(self, value, key, server, status, callback):
-     #     status['result'][key] = value
-     #     self._expectvalue(server, line=None, callback=functools.partial(self._gets_expectval_cb, server=server, status=status, callback=callback))
-
-    def _expect(self, data, expected, callback):
-        if isinstance(data, basestring) and data.endswith('\r\n'):
-            data = data[:-2]
-        callback(data == expected)
-
-    # def gets_many(self, keys, callback):
-    #     """
-    #     The memcached "gets" command.
-
-    #     Args:
-    #       keys: list(str), see class docs for details.
-
-    #     Returns:
-    #       A dict in which the keys are elements of the "keys" argument list and
-    #       the values are tuples of (value, cas) from the cache. The dict may
-    #       contain all, some or none of the given keys.
-    #     """
-    #     if not keys:
-    #         callback({})
-    #         return
-
-    #     return self._fetch_cmd('gets', keys, True)
-
-    # def gets(self, keys, callback):
-    #     '''Retrieves several keys from the memcache.
-
-    #     @return: The value list
-    #     '''
-    #     servers = dict()
-
-    #     for key in keys:
-    #         server, key = self._get_server(key)
-    #         if not server:
-    #             logging.warning('No available server for %s' % key)
-    #         servers.setdefault(server, [])
-    #         servers[server].append(key)
-
-    #      gets_stat = {
-    #          'server':servers.keys(),
-    #          'finished':0,
-    #          'result':{}
-    #      }
-
-    #      for server in servers:
-    #          cmd = "get %s" % ' '.join(servers[server])
-    #          server.fetch_cmd(cmd)
-    #          server.send(cmd), functools.partial(self._gets_send_cb, server=server, status=gets_stat, callback=self._set_timeout(server, callback)))
 
     def delete(self, key, time=0, noreply=True, callback=None):
         """
@@ -855,12 +779,11 @@ class Connection:
         self._add_timeout("Timeout on fetch '{0}'".format(name))
 
         try:
+            result = {}
             # send command
             cmd = '{0} {1}\r\n'.format(name, ' '.join(key_strs))
             _ = yield Task(self._stream.write, cmd)
-
             # parse response
-            result = {}
             while True:
                 line = yield Task(self._stream.read_until, "\r\n")
                 line = line[:-2]
@@ -888,7 +811,8 @@ class Connection:
                 else:
                     raise MemcacheUnknownError(line[:32])
         except Exception as err:
-            self.mark_dead(err.message)
+            if isinstance(err, (IOError, OSError)):
+                self.mark_dead(err.message)
             if self._ignore_exc:
                 self._clear_timeout()
                 callback({})
@@ -906,6 +830,11 @@ class Connection:
             key = str(key)
             if ' ' in key:
                 raise MemcacheIllegalInputError("Key contains spaces: %s", key)
+            # process cas. Only digits are allowed by memcached
+            # if cas is not None:
+            #     cas = str(cas)
+            #     if not cas.isdigit():
+            #         MemcacheIllegalInputError("Digit based cas was expected")
             # process data
             flags = 0
             if self._serializer:
@@ -923,7 +852,7 @@ class Connection:
 
         if cas is not None and noreply:
             extra = ' {0} noreply'.format(cas)
-        if cas is not None and not noreply:
+        elif cas is not None and not noreply:
             extra = ' {0}'.format(cas)
         elif cas is None and noreply:
             extra = ' noreply'
@@ -957,7 +886,8 @@ class Connection:
             else:
                 raise MemcacheUnknownError(line[:32])
         except Exception as err:
-            self.mark_dead(err.message)
+            if isinstance(err, (IOError, OSError)):
+                self.mark_dead(err.message)
             raise
 
     @engine
@@ -983,7 +913,8 @@ class Connection:
             self._raise_errors(line, cmd_name)
             self._clear_timeout()
         except Exception as err:
-            self.mark_dead(err.message)
+            if isinstance(err, (IOError, OSError)):
+                self.mark_dead(err.message)
             raise
         # invoke
         callback and callback(line)

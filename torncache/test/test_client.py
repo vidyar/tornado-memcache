@@ -164,40 +164,55 @@ class ClientTest(testing.AsyncTestCase):
 #         result = client.decr('key', 1, noreply=False)
 #         tools.assert_equal(result, 1)
 
+    def test_append_stored(self):
+        self.pool.set('key', 'value', noreply=True, callback=self.stop)
+        self.wait()
 
-# class TestClient(ClientTestMixin, unittest.TestCase):
+        self.pool.append('key', '1', noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
-#     Client = Client
+        self.pool.get('key', callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, 'value1')
 
-#     def test_append_stored(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['STORED\r\n'])
-#         result = client.append('key', 'value', noreply=False)
-#         tools.assert_equal(result, True)
+    def test_prepend_stored(self):
+        self.pool.set('key', 'value', noreply=True, callback=self.stop)
+        self.wait()
 
-#     def test_prepend_stored(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['STORED\r\n'])
-#         result = client.prepend('key', 'value', noreply=False)
-#         tools.assert_equal(result, True)
+        self.pool.prepend('key', '1', noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
-#     def test_cas_stored(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['STORED\r\n'])
-#         result = client.cas('key', 'value', 'cas', noreply=False)
-#         tools.assert_equal(result, True)
+        self.pool.get('key', callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, '1value')
 
-#     def test_cas_exists(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['EXISTS\r\n'])
-#         result = client.cas('key', 'value', 'cas', noreply=False)
-#         tools.assert_equal(result, False)
+    def test_cas_stored(self):
+        self.pool.set('key', 'value', noreply=True, callback=self.stop)
+        self.wait()
+        self.pool.gets('key', callback=self.stop)
+        _, cas = self.wait()
+        self.pool.cas('key', 'value', cas, noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
-#     def test_cas_not_found(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['NOT_FOUND\r\n'])
-#         result = client.cas('key', 'value', 'cas', noreply=False)
-#         tools.assert_equal(result, None)
+    def test_cas_exists(self):
+        self.pool.set('key', 'value', noreply=True, callback=self.stop)
+        self.wait()
+        self.pool.gets('key', callback=self.stop)
+        _, cas = self.wait()
+        self.pool.set('key', 'other_value', noreply=True, callback=self.stop)
+        self.wait()
+        self.pool.cas('key', 'value', cas, noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertFalse(result)
+
+    def test_cas_not_found(self):
+        self.pool.cas('key', 'value', 0, noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertEquals(result, None)
+
 
 #     def test_cr_nl_boundaries(self):
 #         client = self.Client(None)
