@@ -6,12 +6,7 @@ env:
   - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py26
   - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py27
   - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py27-opt
-  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py32
-  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py32-utf8
-  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py32-opt
-  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=py33
   - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=pypy
-  - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=flake8
 install:
   - pip install tox
 script:
