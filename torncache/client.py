@@ -199,6 +199,17 @@ class Client(object):
                 self._buckets.append(server)
             self._servers.append(server)
 
+    def _find_server(self, value):
+        """Find a server from a string"""
+        if isinstance(value, Connection):
+            return value
+        # check if server is an address
+        for candidate in self._servers:
+            if str(candidate) == value:
+                return candidate
+        # try with a key
+        return self._get_server(value)[0]
+
     def _get_server(self, key):
         """Fetch valid MC for this key"""
         serverhash = 0
@@ -424,7 +435,7 @@ class Client(object):
             retval.update(result)
             servers.pop(server)
             if len(servers) == 0:
-                callback and callback(retval)
+                callback(retval)
 
         # shortcut
         if not keys:
@@ -463,7 +474,7 @@ class Client(object):
         cb = lambda x: callback(x.get(key, (None, None)))
         server.fetch_cmd('gets', [key], True, callback=cb)
 
-    def gets_many(self, keys):
+    def gets_many(self, keys, callback):
         """
         The memcached "gets" command.
 
@@ -475,10 +486,32 @@ class Client(object):
           the values are tuples of (value, cas) from the cache. The dict may
           contain all, some or none of the given keys.
         """
-        if not keys:
-            return {}
+        # response handler
+        def on_response(server, result):
+            retval.update(result)
+            servers.pop(server)
+            if len(servers) == 0:
+                callback(retval)
 
-        return self._fetch_cmd('gets', keys, True)
+        # shortcut
+        if not keys:
+            callback({})
+
+        # init vars
+        retval, servers = dict(), dict()
+        for key in keys:
+            server, key = self._get_server(key)
+            servers.setdefault(server, [])
+            servers[server].append(key)
+        # set it
+        for server, keys in servers.iteritems():
+            if server is None:
+                result = itertools.izip_longest(keys, [], fillvalue=None)
+                on_response(server, result)
+                continue
+            cb = stack_context.wrap(functools.partial(on_response, server))
+            server.fetch_cmd('gets', keys, True, callback=cb)
+
 
     def delete(self, key, time=0, noreply=True, callback=None):
         """
@@ -554,11 +587,11 @@ class Client(object):
 
         Returns:
           If noreply is True, always returns None. Otherwise returns the new
-          value of the key, or None if the key wasn't found.
+          value of the key, or False if the key wasn't found.
         """
         def on_response(data):
-            result = None if data.startswith('NOT_FOUND') else int(data)
-            callback(result)
+            result = False if data.startswith('NOT_FOUND') else int(data)
+            callback and callback(result)
 
         # Fetch memcached connection
         server, key = self._get_server(key)
@@ -584,11 +617,11 @@ class Client(object):
 
         Returns:
           If noreply is True, always returns None. Otherwise returns the new
-          value of the key, or None if the key wasn't found.
+          value of the key, or False if the key wasn't found.
         """
         def on_response(data):
-            result = None if data.startswith('NOT_FOUND') else int(data)
-            callback(result)
+            result = False if data.startswith('NOT_FOUND') else int(data)
+            callback and callback(result)
 
         # Fetch memcached connection
         server, key = self._get_server(key)
@@ -603,7 +636,7 @@ class Client(object):
         cb = callback if noreply else stack_context.wrap(on_response)
         server.misc_cmd(cmd, 'decr', noreply, callback=cb)
 
-    def touch(self, key, expire=0, noreply=True):
+    def touch(self, key, expire=0, noreply=True, callback=None):
         """
         The memcached "touch" command.
 
@@ -617,16 +650,23 @@ class Client(object):
           True if the expiration time was updated, False if the key wasn't
           found.
         """
-        cmd = "touch {0} {1}{2}\r\n".format(
-            key,
-            expire,
-            ' noreply' if noreply else '')
-        result = self._misc_cmd(cmd, 'touch', noreply)
-        if noreply:
-            return True
-        return result == 'TOUCHED'
+        def on_response(data):
+            callback and callback(data.startswith('TOUCHED'))
 
-    def stats(self, *args):
+        # Fetch memcached connection
+        server, key = self._get_server(key)
+        if not server:
+            callback and callback(None)
+            return
+
+        replarg = ' noreply' if noreply else ''
+        cmd = "touch {0} {1}{2}\r\n".format(key, expire, replarg)
+
+        # invoke
+        cb = callback if noreply else stack_context.wrap(on_response)
+        server.misc_cmd(cmd, 'touch', noreply, callback=cb)
+
+    def stats(self, server, *args, **kwargs):
         """
         The memcached "stats" command.
 
@@ -641,18 +681,27 @@ class Client(object):
         Returns:
           A dict of the returned stats.
         """
-        result = self._fetch_cmd('stats', args, False)
+        def on_response(data):
+            result = {}
+            for key, value in data.iteritems():
+                converter = STAT_TYPES.get(key, int)
+                try:
+                    result[key] = converter(value)
+                except Exception:
+                    pass
+            callback(result)
 
-        for key, value in result.iteritems():
-            converter = STAT_TYPES.get(key, int)
-            try:
-                result[key] = converter(value)
-            except Exception:
-                pass
+        # Fetch memcached connection
+        callback, server = kwargs['callback'], self._find_server(server)
+        if not server:
+            callback(None)
+            return
 
-        return result
+        # invoke
+        cb = stack_context.wrap(on_response)
+        server.fetch_cmd('stats', args, False, callback=cb)
 
-    def flush_all(self, delay=0, noreply=True):
+    def flush_all(self, server, delay=0, noreply=True, callback=None):
         """
         The memcached "flush_all" command.
 
@@ -664,13 +713,23 @@ class Client(object):
         Returns:
           True.
         """
-        cmd = "flush_all {0}{1}\r\n".format(delay, ' noreply' if noreply else '')
-        result = self._misc_cmd(cmd, 'flush_all', noreply)
-        if noreply:
-            return True
-        return result == 'OK'
+        def on_response(data):
+            callback and callback(data.startswith('OK'))
 
-    def quit(self):
+        # Fetch memcached connection
+        server = self._find_server(server)
+        if not server:
+            callback and callback(None)
+            return
+
+        replarg = ' noreply' if noreply else ''
+        cmd = "flush_all {0} {1}\r\n".format(delay, replarg)
+
+        # invoke
+        cb = callback if noreply else stack_context.wrap(on_response)
+        server.misc_cmd(cmd, 'flush_all', noreply, callback=cb)
+
+    def quit(self, server, callback=None):
         """
         The memcached "quit" command.
 
@@ -678,9 +737,18 @@ class Client(object):
         method on this object will re-open the connection, so this object can
         be re-used after quit.
         """
+        def on_response(result):
+            server.close()
+            callback and callback(result)
+
+        # Fetch memcached connection
+        server = self._find_server(server)
+        if not server:
+            raise MemcacheClientError("Unknown Server {0}".format(server))
+
         cmd = "quit\r\n"
-        self._misc_cmd(cmd, 'quit', True)
-        self.close()
+        cb = stack_context.wrap(on_response)
+        server.misc_cmd(cmd, 'quit', True, callback=cb)
 
 
 class Connection:
@@ -845,6 +913,7 @@ class Connection:
         try:
             result = {}
             # send command
+
             cmd = '{0} {1}\r\n'.format(name, ' '.join(key_strs))
             _ = yield Task(self._stream.write, cmd)
             # parse response
@@ -902,7 +971,7 @@ class Connection:
             # process data
             flags = 0
             if self._serializer:
-                data, flags = self.serializer(key, data)
+                data, flags = self._serializer(key, data)
             data = str(data)
         except UnicodeEncodeError as e:
             raise MemcacheIllegalInputError(str(e))
