@@ -209,11 +209,6 @@ class Client(object):
         # get pair server, key
         return (self._buckets[serverhash % len(self._buckets)], key)
 
-    def _expect(self, data, expected, callback):
-        if isinstance(data, basestring) and data.endswith('\r\n'):
-            data = data[:-2]
-        callback(data == expected)
-
     def set(self, key, value, expire=0, noreply=True, callback=None):
         """
         The memcached "set" command.
@@ -496,6 +491,9 @@ class Client(object):
           If noreply is True, always returns True. Otherwise returns True if
           the key was deleted, and False if it wasn't found.
         """
+        def on_response(data):
+            callback(data.startswith('DELETED'))
+
         # Fetch memcached connection
         server, key = self._get_server(key)
         if not server:
@@ -507,8 +505,7 @@ class Client(object):
         cmd = 'delete {0}{1}{2}\r\n'.format(key, timearg, replarg)
 
         # invoke
-        cb = lambda x: self._expect(x, 'DELETED', callback)
-        cb = callback if noreply else cb
+        cb = callback if noreply else stack_context.wrap(on_response)
         server.misc_cmd(cmd, 'delete', noreply, callback=cb)
 
     def delete_many(self, keys, noreply=True, callback=None):
@@ -546,7 +543,7 @@ class Client(object):
             cb = stack_context.wrap(functools.partial(on_response, key))
             self.delete(key, noreply, callback=cb)
 
-    def incr(self, key, value, noreply=False):
+    def incr(self, key, value, noreply=False, callback=None):
         """
         The memcached "incr" command.
 
@@ -559,18 +556,24 @@ class Client(object):
           If noreply is True, always returns None. Otherwise returns the new
           value of the key, or None if the key wasn't found.
         """
-        cmd = "incr {0} {1}{2}\r\n".format(
-            key,
-            str(value),
-            ' noreply' if noreply else '')
-        result = self._misc_cmd(cmd, 'incr', noreply)
-        if noreply:
-            return None
-        if result == 'NOT_FOUND':
-            return None
-        return int(result)
+        def on_response(data):
+            result = None if data.startswith('NOT_FOUND') else int(data)
+            callback(result)
 
-    def decr(self, key, value, noreply=False):
+        # Fetch memcached connection
+        server, key = self._get_server(key)
+        if not server:
+            callback and callback(None)
+            return
+
+        replarg = ' noreply' if noreply else ''
+        cmd = "incr {0} {1}{2}\r\n".format(key, str(value), replarg)
+
+        # invoke
+        cb = callback if noreply else stack_context.wrap(on_response)
+        server.misc_cmd(cmd, 'incr', noreply, callback=cb)
+
+    def decr(self, key, value, noreply=False, callback=None):
         """
         The memcached "decr" command.
 
@@ -583,16 +586,22 @@ class Client(object):
           If noreply is True, always returns None. Otherwise returns the new
           value of the key, or None if the key wasn't found.
         """
-        cmd = "decr {0} {1}{2}\r\n".format(
-            key,
-            str(value),
-            ' noreply' if noreply else '')
-        result = self._misc_cmd(cmd, 'decr', noreply)
-        if noreply:
-            return None
-        if result == 'NOT_FOUND':
-            return None
-        return int(result)
+        def on_response(data):
+            result = None if data.startswith('NOT_FOUND') else int(data)
+            callback(result)
+
+        # Fetch memcached connection
+        server, key = self._get_server(key)
+        if not server:
+            callback and callback(None)
+            return
+
+        replarg = ' noreply' if noreply else ''
+        cmd = "decr {0} {1}{2}\r\n".format(key, str(value), replarg)
+
+        # invoke
+        cb = callback if noreply else stack_context.wrap(on_response)
+        server.misc_cmd(cmd, 'decr', noreply, callback=cb)
 
     def touch(self, key, expire=0, noreply=True):
         """

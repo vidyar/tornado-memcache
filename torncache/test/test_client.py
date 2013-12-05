@@ -94,7 +94,6 @@ class ClientTest(testing.AsyncTestCase):
         self.pool.delete_many(['key1', 'key2'], noreply=False, callback=self.stop)
         self.wait()
 
-
     def test_get_unicode_key(self):
         with self.assertRaises(memcache.MemcacheIllegalInputError):
             self.pool.get(u'\u0FFF')
@@ -116,47 +115,47 @@ class ClientTest(testing.AsyncTestCase):
         result = self.wait()
         self.assertTrue(result)
 
-#     def test_incr_not_found(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['NOT_FOUND\r\n'])
-#         result = client.incr('key', 1, noreply=False)
-#         tools.assert_equal(result, None)
+    def test_incr_not_found(self):
+        self.pool.incr('key', 1, noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, None)
 
-#     def test_incr_found(self):
-#         client = self.Client(None)
+    def test_incr_found(self):
+        self.pool.set('key', 0, noreply=False, callback=self.stop)
+        self.wait()
 
-#         client.sock = MockSocket(['STORED\r\n'])
-#         client.set('key', 0, noreply=False)
+        self.pool.incr('key', 1, noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, 1)
 
-#         client.sock = MockSocket(['1\r\n'])
-#         result = client.incr('key', 1, noreply=False)
-#         tools.assert_equal(result, 1)
+    def test_incr_noreply(self):
+        self.pool.set('key', 0, noreply=False, callback=self.stop)
+        self.wait()
 
-#     def test_incr_noreply(self):
-#         client = self.Client(None)
+        self.pool.incr('key', 1, noreply=True, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
-#         client.sock = MockSocket(['STORED\r\n'])
-#         client.set('key', 0, noreply=False)
+    def test_decr_not_found(self):
+        self.pool.decr('key', 1, noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, None)
 
-#         client.sock = MockSocket([])
-#         result = client.incr('key', 1, noreply=True)
-#         tools.assert_equal(result, None)
+    def test_decr_found(self):
+        self.pool.set('key', 2, noreply=False, callback=self.stop)
+        self.wait()
 
-#     def test_decr_not_found(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['NOT_FOUND\r\n'])
-#         result = client.decr('key', 1, noreply=False)
-#         tools.assert_equal(result, None)
+        self.pool.decr('key', 1, noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, 1)
 
-#     def test_decr_found(self):
-#         client = self.Client(None)
+    def test_decr_noreply(self):
+        self.pool.set('key', 2, noreply=False, callback=self.stop)
+        self.wait()
 
-#         client.sock = MockSocket(['STORED\r\n'])
-#         client.set('key', 2, noreply=False)
-
-#         client.sock = MockSocket(['1\r\n'])
-#         result = client.decr('key', 1, noreply=False)
-#         tools.assert_equal(result, 1)
+        self.pool.decr('key', 1, noreply=True, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
     def test_append_stored(self):
         self.pool.set('key', 'value', noreply=True, callback=self.stop)
