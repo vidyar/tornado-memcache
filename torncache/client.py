@@ -8,6 +8,7 @@ import weakref
 import socket
 import time
 import logging
+import itertools
 import functools
 import collections
 
@@ -406,6 +407,44 @@ class Client(object):
 
         cb = lambda x: callback(x.get(key, None))
         server.fetch_cmd('get', [key], False, callback=cb)
+
+    def get_many(self, keys, callback):
+        """
+        The memcached "get" command.
+
+        Args:
+          keys: list(str), see class docs for details.
+
+        Returns:
+          A dict in which the keys are elements of the "keys" argument list
+          and the values are values from the cache. The dict may contain all,
+          some or none of the given keys.
+        """
+        # response handler
+        def on_response(server, result):
+            retval.update(result)
+            servers.pop(server)
+            if len(servers) == 0:
+                callback and callback(retval)
+
+        # shortcut
+        if not keys:
+            callback({})
+
+        # init vars
+        retval, servers = dict(), dict()
+        for key in keys:
+            server, key = self._get_server(key)
+            servers.setdefault(server, [])
+            servers[server].append(key)
+        # set it
+        for server, keys in servers.iteritems():
+            if server is None:
+                result = itertools.izip_longest(keys, [], fillvalue=None)
+                on_response(server, result)
+                continue
+            cb = stack_context.wrap(functools.partial(on_response, server))
+            server.fetch_cmd('get', keys, True, callback=cb)
 
     def gets(self, key, callback):
         """

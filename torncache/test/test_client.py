@@ -69,11 +69,10 @@ class ClientTest(testing.AsyncTestCase):
         result = self.wait()
         self.assertEqual(result, 'value')
 
-#     def test_get_many_none_found(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['END\r\n'])
-#         result = client.get_many(['key1', 'key2'])
-#         tools.assert_equal(result, {})
+    def test_get_many_none_found(self):
+        self.pool.get_many(['key1', 'key2'], callback=self.stop)
+        result = self.wait()
+        self.assertEqual(result, {})
 
 #     def test_get_many_some_found(self):
 #         client = self.Client(None)
@@ -212,7 +211,6 @@ class ClientTest(testing.AsyncTestCase):
         self.pool.cas('key', 'value', 0, noreply=False, callback=self.stop)
         result = self.wait()
         self.assertEquals(result, None)
-
 
 #     def test_cr_nl_boundaries(self):
 #         client = self.Client(None)
