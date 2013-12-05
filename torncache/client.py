@@ -270,7 +270,7 @@ class Client(object):
             cb = stack_context.wrap(functools.partial(on_response, key))
             self.set(key, value, expire, noreply, callback=cb)
 
-    def add(self, key, value, expire=0, noreply=True):
+    def add(self, key, value, expire=0, noreply=True, callback=None):
         """
         The memcached "add" command.
 
@@ -286,7 +286,13 @@ class Client(object):
           return value is True if the value was stgored, and False if it was
           not (because the key already existed).
         """
-        return self._store_cmd('add', key, expire, noreply, value)
+        # Fetch memcached connection
+        server, key = self._get_server(key)
+        if not server:
+            callback and callback(None)
+            return
+        # invoke
+        server.store_cmd('add', key, expire, noreply, value, None, callback)
 
     def replace(self, key, value, expire=0, noreply=True):
         """

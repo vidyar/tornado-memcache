@@ -43,20 +43,19 @@ class ClientTest(testing.AsyncTestCase):
         result = self.wait()
         self.assertTrue(result['key'])
 
-#     def test_add_stored(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['STORED\r', '\n'])
-#         result = client.add('key', 'value', noreply=False)
-#         tools.assert_equal(result, True)
+    def test_add_stored(self):
+        self.pool.add('key', 'value', noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
-#     def test_add_not_stored(self):
-#         client = self.Client(None)
-#         client.sock = MockSocket(['STORED\r', '\n'])
-#         result = client.add('key', 'value', noreply=False)
+    def test_add_not_stored(self):
+        self.pool.add('key', 'value', noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(result)
 
-#         client.sock = MockSocket(['NOT_', 'STOR', 'ED', '\r\n'])
-#         result = client.add('key', 'value', noreply=False)
-#         tools.assert_equal(result, False)
+        self.pool.add('key', 'value', noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertFalse(result)
 
     def test_get_not_found(self):
         self.pool.get('key_not_found', callback=self.stop)
