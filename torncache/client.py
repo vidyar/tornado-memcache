@@ -156,20 +156,27 @@ class ClientPool(object):
                         server = [server, weight]
                 _servers.append(server)
         # add port to tuples if missing
-        retval = []
+        retval = {}
         for host in _servers:
-            weight = 1
+            weight, port = 1, 11211
             # extract host and weight from tuple
             if not isinstance(host, basestring):
                 if len(host) > 1:
                     weight = host[1]
                 host = host[0]
-            #  parse host
-            if ':' not in host:
-                host = ":".join((host, '11211'))
-            retval.append((host, weight))
+            # extract host and port
+            if ':' in host:
+                host, _, port = host.partition(':')
+            # resolve host
+            candidates = socket.getaddrinfo(
+                host, port,
+                socket.AF_INET, socket.SOCK_STREAM)
+            for candidate in candidates:
+                host = "{0}:{1}".format(*candidate[4])
+                weight = retval.get(host, weight - 1)
+                retval[host] = weight + 1
         # Return well formatted list of servers
-        return retval
+        return retval.items()
 
     def _create_clients(self, n):
         return [Client(self._servers, **self._kwargs) for x in xrange(n)]
