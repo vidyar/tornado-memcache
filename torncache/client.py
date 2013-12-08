@@ -220,7 +220,7 @@ class Client(object):
     def __init__(self, servers, ioloop=None,
                  serializer=None, deserializer=None,
                  connect_timeout=5, timeout=1, no_delay=True,
-                 ignore_exc=False, dead_retry=30,
+                 ignore_exc=True, dead_retry=30,
                  server_retries=10):
 
         # Watcher to destroy client when ioloop expires
@@ -487,8 +487,8 @@ class Client(object):
         # response handler
         def on_response(server, result):
             retval.update(result)
-            servers.pop(server)
-            if len(servers) == 0:
+            pending.remove(server)
+            if len(pending) == 0:
                 callback(retval)
 
         # shortcut
@@ -502,6 +502,7 @@ class Client(object):
             servers.setdefault(server, [])
             servers[server].append(key)
         # set it
+        pending = servers.keys()
         for server, keys in servers.iteritems():
             if server is None:
                 result = itertools.izip_longest(keys, [], fillvalue=None)
@@ -543,8 +544,8 @@ class Client(object):
         # response handler
         def on_response(server, result):
             retval.update(result)
-            servers.pop(server)
-            if len(servers) == 0:
+            pending.remove(server)
+            if len(pending) == 0:
                 callback(retval)
 
         # shortcut
@@ -552,12 +553,13 @@ class Client(object):
             callback({})
 
         # init vars
-        retval, servers = dict(), dict()
+        responses, retval, servers = [], dict(), dict()
         for key in keys:
             server, key = self._get_server(key)
             servers.setdefault(server, [])
             servers[server].append(key)
         # set it
+        pending = servers.keys()
         for server, keys in servers.iteritems():
             if server is None:
                 result = itertools.izip_longest(keys, [], fillvalue=None)
@@ -565,7 +567,6 @@ class Client(object):
                 continue
             cb = stack_context.wrap(functools.partial(on_response, server))
             server.fetch_cmd('gets', keys, True, callback=cb)
-
 
     def delete(self, key, time=0, noreply=True, callback=None):
         """
@@ -881,10 +882,11 @@ class Connection:
 
     def mark_dead(self, reason):
         """Quarintine MC server for a period of time"""
-        logging.warning("Marking dead %s: '%s'" % (self, reason))
-        self._dead_until = time.time() + self._dead_retry
-        self._clear_timeout()
-        self.close()
+        if self._dead_until < time.time():
+            logging.warning("Marking dead %s: '%s'" % (self, reason))
+            self._dead_until = time.time() + self._dead_retry
+            self._clear_timeout()
+            self.close()
 
     def connect(self, callback=None):
         """Open a connection to MC server"""
@@ -895,10 +897,14 @@ class Connection:
             raise MemcacheTimeoutError(reason)
 
         def on_close():
+            self._clear_timeout()
             if self._stream and self._stream.error:
+                error = self._stream.error
+                self._stream = None
+                if self._connect_callbacks:
+                    self._connect_callbacks = None
+                    raise error
                 logging.error(self._stream.error)
-            self._stream = None
-            self._connect_callbacks = []
 
         def on_connect():
             self._clear_timeout()
@@ -957,14 +963,13 @@ class Connection:
         except UnicodeEncodeError as e:
             raise MemcacheIllegalInputError(str(e))
 
-        # Open connection if required
-        if self.closed:
-            yield Task(self.connect)
-
-        # Add timeout for this request
-        self._add_timeout("Timeout on fetch '{0}'".format(name))
-
         try:
+            # Open connection if required
+            self.closed and (yield Task(self.connect))
+
+            # Add timeout for this request
+            self._add_timeout("Timeout on fetch '{0}'".format(name))
+
             result = {}
             # send command
 
@@ -999,7 +1004,7 @@ class Connection:
                     raise MemcacheUnknownError(line[:32])
         except Exception as err:
             if isinstance(err, (IOError, OSError)):
-                self.mark_dead(err.message)
+                self.mark_dead(str(err))
             if self._ignore_exc:
                 self._clear_timeout()
                 callback({})
@@ -1030,13 +1035,7 @@ class Connection:
         except UnicodeEncodeError as e:
             raise MemcacheIllegalInputError(str(e))
 
-        # Open connection if required
-        if self.closed:
-            yield Task(self.connect)
-
-        # Add timeout for this request
-        self._add_timeout("Timeout on fetch '{0}'".format(name))
-
+        # compute cmd
         if cas is not None and noreply:
             extra = ' {0} noreply'.format(cas)
         elif cas is not None and not noreply:
@@ -1050,6 +1049,12 @@ class Connection:
             name, key, flags, expire, len(data), extra, data)
 
         try:
+            # Open connection if required
+            self.closed and (yield Task(self.connect))
+
+            # Add timeout for this request
+            self._add_timeout("Timeout on fetch '{0}'".format(name))
+
             yield Task(self._stream.write, cmd)
             if noreply:
                 self._clear_timeout()
@@ -1075,22 +1080,25 @@ class Connection:
                 raise MemcacheUnknownError(line[:32])
         except Exception as err:
             if isinstance(err, (IOError, OSError)):
-                self.mark_dead(err.message)
+                self.mark_dead(str(err))
+            if self._ignore_exc:
+                self._clear_timeout()
+                callback and callback(None)
+                return
             raise
 
     @engine
     def misc_cmd(self, cmd, cmd_name, noreply, callback=None):
-        # Open connection if required
-        if self.closed:
-            yield Task(self.connect)
-
-        # Add timeout for this request
-        self._add_timeout("Timeout on misc '{0}'".format(cmd_name))
 
         try:
+            # Open connection if required
+            self.closed and (yield Task(self.connect))
+
+            # Add timeout for this request
+            self._add_timeout("Timeout on misc '{0}'".format(cmd_name))
+
             # send command
             yield Task(self._stream.write, cmd)
-
             if noreply:
                 self._clear_timeout()
                 callback and callback(True)
@@ -1099,12 +1107,17 @@ class Connection:
             # wait for response
             line = yield Task(self._stream.read_until, "\r\n")
             self._raise_errors(line, cmd_name)
-            self._clear_timeout()
+
         except Exception as err:
             if isinstance(err, (IOError, OSError)):
-                self.mark_dead(err.message)
+                self.mark_dead(str(err))
+            if self._ignore_exc:
+                self._clear_timeout()
+                callback and callback(None)
+                return
             raise
-        # invoke
+        # return result
+        self._clear_timeout()
         callback and callback(line)
 
     def read(self, rlen, callback):
