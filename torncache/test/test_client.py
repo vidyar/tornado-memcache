@@ -320,3 +320,13 @@ class ClientTest(testing.AsyncTestCase):
         self.pool.stats('key', 'settings', callback=self.stop)
         result = self.wait()
         self.assertTrue(result and 'version' not in result)
+
+    def test_broadcast(self):
+        self.pool.broadcast.flush_all(noreply=False, callback=self.stop)
+        result = self.wait()
+        self.assertTrue(len(result) > 0)
+        self.assertTrue(isinstance(result, dict))
+        self.assertTrue(all(result.iteritems()))
+
+    def test_broadcast_with_no_port(self):
+        pass

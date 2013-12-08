@@ -105,29 +105,74 @@ class MemcacheUnexpectedCloseError(MemcacheServerError):
 class ClientPool(object):
     """A Pool of clients"""
 
+    class _BroadCast(object):
+        """
+        A Private decorator to broadcast some calls like flush_all to all
+        servers
+        """
+        def __init__(self, pool):
+            self.pool = pool
+
+        def __getattr__(self, name):
+            if hasattr(Client, name):
+                return functools.partial(self._invoke, name)
+            # raise AttributeError
+            raise AttributeError(name)
+
+        def _invoke(self, cmd, *args, **kwargs):
+            def on_finish(response, host, _cb):
+                retval[host] = response
+                if len(retval) == len(self.pool._servers):
+                    _cb and _cb(retval)
+            # invoke and collect results
+            retval = {}
+            cb = kwargs.get('callback')
+            for host, _ in self.pool._servers:
+                kwargs['callback'] = functools.partial(on_finish, host, _cb=cb)
+                func = functools.partial(getattr(self.pool, cmd), host)
+                func(*args, **kwargs)
+
     def __init__(self, servers, size=0, **kwargs):
-        self._servers = servers
+        self._servers = self._parse_servers(servers)
         self._size = size
         self._used = collections.deque()
         self._clients = collections.deque()
         # Client arguments
         self._kwargs = kwargs
 
-    def _create_clients(self, n):
-        servers = self._servers
+    @staticmethod
+    def _parse_servers(servers):
+        _servers = servers or []
+        # Parse servers if it's a collection of urls
         if isinstance(servers, basestring):
-            servers = []
-            for server in self._servers.split(','):
+            _servers = []
+            for server in servers.split(','):
                 # parse url form 'mc://host:port?<weight>='
-                if self._servers.startswith('mc'):
+                if servers.startswith('mc'):
                     url = urlparse.urlsplit(server)
                     server = url.netloc
                     if url.query:
                         weight = urlparse.parse_qs(url.query).get('weight', 1)
                         server = [server, weight]
-                servers.append(server)
-        # create clients
-        return [Client(servers, **self._kwargs) for x in xrange(n)]
+                _servers.append(server)
+        # add port to tuples if missing
+        retval = []
+        for host in _servers:
+            weight = 1
+            # extract host and weight from tuple
+            if not isinstance(host, basestring):
+                if len(host) > 1:
+                    weight = host[1]
+                host = host[0]
+            #  parse host
+            if ':' not in host:
+                host = ":".join((host, '11211'))
+            retval.append((host, weight))
+        # Return well formatted list of servers
+        return retval
+
+    def _create_clients(self, n):
+        return [Client(self._servers, **self._kwargs) for x in xrange(n)]
 
     def _invoke(self, cmd, *args, **kwargs):
         def on_finish(response, c, _cb, **kwargs):
@@ -152,6 +197,8 @@ class ClientPool(object):
     def __getattr__(self, name):
         if hasattr(Client, name):
             return functools.partial(self._invoke, name)
+        if name == 'broadcast':
+            return self._BroadCast(self)
         # raise error
         raise AttributeError(name)
 
@@ -1012,6 +1059,7 @@ class Connection:
                     callback(True)
                 elif line == 'NOT_STORED':
                     callback(False)
+                # only for cas related actions
                 elif line == 'NOT_FOUND':
                     callback(None)
                 elif line == 'EXISTS':
