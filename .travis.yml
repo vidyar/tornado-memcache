@@ -2,7 +2,7 @@ language: python
 python: 2.7
 
 services:
-  - memcached
+  - memcached-1.4.15
 env:
   - MEMCACHED_URL=mc://localhost:11211 TOX_ENV=pypy
 install:
