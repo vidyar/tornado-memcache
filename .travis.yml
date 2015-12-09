@@ -11,3 +11,4 @@ install:
   - pip install tox
 script:
   - tox -e $TOX_ENV
+build_image: drydock/u14pytpls:prod
